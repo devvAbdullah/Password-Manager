@@ -7,58 +7,107 @@ const bodyParser = require('body-parser');
 dotenv.config();
 
 const app = express();
+const port = process.env.PORT || 3000; // Port can be dynamic for Vercel
 
 // Middleware
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: 'https://your-vercel-url.vercel.app', // Adjust this with your front-end URL
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+}));
 app.use(bodyParser.json());
 
+// Database Connection
 const url = process.env.MONGO_URI;
 const client = new MongoClient(url);
 const dbName = 'passop';
 
-let collection;
+let db, collection;
 
-// MongoDB connection
-client.connect().then(() => {
-  const db = client.db(dbName);
-  collection = db.collection('passwords');
-  console.log('Connected to MongoDB');
-}).catch(console.error);
+async function connectDB() {
+  try {
+    await client.connect();
+    db = client.db(dbName);
+    collection = db.collection('passwords');
+    console.log('Connected to MongoDB');
 
-// Test route
-app.get('/', (req, res) => {
-  res.send('Welcome to the Password Manager API!');
-});
+    // Define routes only after DB connection
+    defineRoutes();
 
+    // No need for explicit `app.listen` in Vercel, as it's a serverless function
+  } catch (err) {
+    console.error('Database connection error:', err);
+    process.exit(1);
+  }
+}
 
-// Get all passwords
-app.get('/api/passwords', async (req, res) => {
-  const passwords = await collection.find({}).toArray();
-  res.json(passwords);
-});
+// Routes defined after DB connection
+function defineRoutes() {
 
-// Add a password
-app.post('/api/passwords', async (req, res) => {
-  const password = req.body;
-  const result = await collection.insertOne(password);
-  res.status(201).json({ ...password, _id: result.insertedId });
-});
+  // Get all passwords
+  app.get('/api/passwords', async (req, res) => {
+    try {
+      const passwords = await collection.find({}).toArray();
+      res.json(passwords);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch passwords' });
+    }
+  });
 
-// Delete a password
-app.delete('/api/passwords/:id', async (req, res) => {
-  const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) });
-  res.json({ success: result.deletedCount > 0 });
-});
+  // Save a password
+  app.post('/api/passwords', async (req, res) => {
+    try {
+      const password = req.body;
+      if (!password.site || !password.username || !password.password) {
+        return res.status(400).json({ error: 'Missing required fields' });
+      }
+      const result = await collection.insertOne(password);
+      res.status(201).json({ ...password, _id: result.insertedId });
+    } catch (err) {
+      console.error('Error saving password:', err);
+      res.status(500).json({ error: 'Failed to save password' });
+    }
+  });
 
-// Update a password
-app.put('/api/passwords/:id', async (req, res) => {
-  const result = await collection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: req.body }
-  );
-  const updated = await collection.findOne({ _id: new ObjectId(req.params.id) });
-  res.json(updated);
-});
+  // Delete a password by id
+  app.delete('/api/passwords/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await collection.deleteOne({ _id: new ObjectId(id) });
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ error: 'Password not found' });
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to delete password' });
+    }
+  });
 
-// Export as Vercel function
+  // Update a password
+  app.put('/api/passwords/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const password = req.body;
+      const result = await collection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: password }
+      );
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ error: 'Password not found' });
+      }
+      const updatedDoc = await collection.findOne({ _id: new ObjectId(id) });
+      res.json(updatedDoc);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to update password' });
+    }
+  });
+}
+
+// Connect to DB and run serverless function
+connectDB();
+
+// Export as serverless function (Vercel needs this for routing)
 module.exports = app;

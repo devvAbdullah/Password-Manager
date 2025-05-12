@@ -27,8 +27,9 @@ client.connect().then(() => {
 
 // Test route
 app.get('/', (req, res) => {
-  res.send('API is running 🚀');
+  res.send('Welcome to the Password Manager API!');
 });
+
 
 // Get all passwords
 app.get('/api/passwords', async (req, res) => {

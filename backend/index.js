@@ -3,15 +3,18 @@ const dotenv = require('dotenv');
 const { MongoClient, ObjectId } = require('mongodb');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const serverless = require('serverless-http'); // Added
 
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000; // Port can be dynamic for Vercel
+const port = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors({
-  origin: 'https://your-vercel-url.vercel.app', // Adjust this with your front-end URL
+  origin: [
+    'https://glittering-lollipop-250a38.netlify.app',
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
@@ -30,21 +33,14 @@ async function connectDB() {
     db = client.db(dbName);
     collection = db.collection('passwords');
     console.log('Connected to MongoDB');
-
-    // Define routes only after DB connection
     defineRoutes();
-
-    // No need for explicit `app.listen` in Vercel, as it's a serverless function
   } catch (err) {
     console.error('Database connection error:', err);
     process.exit(1);
   }
 }
 
-// Routes defined after DB connection
 function defineRoutes() {
-
-  // Get all passwords
   app.get('/api/passwords', async (req, res) => {
     try {
       const passwords = await collection.find({}).toArray();
@@ -55,7 +51,6 @@ function defineRoutes() {
     }
   });
 
-  // Save a password
   app.post('/api/passwords', async (req, res) => {
     try {
       const password = req.body;
@@ -70,7 +65,6 @@ function defineRoutes() {
     }
   });
 
-  // Delete a password by id
   app.delete('/api/passwords/:id', async (req, res) => {
     try {
       const { id } = req.params;
@@ -85,7 +79,6 @@ function defineRoutes() {
     }
   });
 
-  // Update a password
   app.put('/api/passwords/:id', async (req, res) => {
     try {
       const { id } = req.params;
@@ -106,8 +99,13 @@ function defineRoutes() {
   });
 }
 
-// Connect to DB and run serverless function
+// Initialize database connection
 connectDB();
 
-// Export as serverless function (Vercel needs this for routing)
-module.exports = app;
+// Serverless configuration
+const handler = serverless(app);
+module.exports.handler = async (event, context) => {
+  // Ensure fresh connection for each Lambda execution
+  if (!db) await connectDB();
+  return handler(event, context);
+};

@@ -102,5 +102,5 @@ function defineRoutes() {
 // Initialize database connection
 connectDB();
 
-// Export serverless function
-module.exports.handler = serverless(app);
+// Export serverless handler as the default export
+module.exports = serverless(app);

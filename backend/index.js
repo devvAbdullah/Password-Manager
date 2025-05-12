@@ -8,99 +8,107 @@ const serverless = require('serverless-http');
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors({
-  origin: [
-    'https://glittering-lollipop-250a38.netlify.app',
-  ],
+  origin: ['https://glittering-lollipop-250a38.netlify.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
 app.use(bodyParser.json());
 
-// Database Connection
-const url = process.env.MONGO_URI;
-const client = new MongoClient(url);
+// MongoDB Config
+const uri = process.env.MONGO_URI;
 const dbName = 'passop';
 
-let db, collection;
+let cachedClient = null;
+let cachedDb = null;
 
-async function connectDB() {
-  try {
-    await client.connect();
-    db = client.db(dbName);
-    collection = db.collection('passwords');
-    console.log('Connected to MongoDB');
-    defineRoutes();
-  } catch (err) {
-    console.error('Database connection error:', err);
-    process.exit(1);
+async function connectToDatabase() {
+  if (cachedDb && cachedClient) {
+    return { db: cachedDb, client: cachedClient };
   }
+
+  const client = new MongoClient(uri, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+  });
+
+  await client.connect();
+  const db = client.db(dbName);
+
+  cachedClient = client;
+  cachedDb = db;
+
+  console.log('Connected to MongoDB');
+  return { db, client };
 }
 
-function defineRoutes() {
-  app.get('/api/passwords', async (req, res) => {
-    try {
-      const passwords = await collection.find({}).toArray();
-      res.json(passwords);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Failed to fetch passwords' });
+// Define routes inside the connect wrapper
+app.use(async (req, res, next) => {
+  try {
+    const { db } = await connectToDatabase();
+    req.db = db;
+    req.collection = db.collection('passwords');
+    next();
+  } catch (error) {
+    console.error('Mongo connection error:', error);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+});
+
+app.get('/api/passwords', async (req, res) => {
+  try {
+    const passwords = await req.collection.find({}).toArray();
+    res.json(passwords);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch passwords' });
+  }
+});
+
+app.post('/api/passwords', async (req, res) => {
+  try {
+    const password = req.body;
+    if (!password.site || !password.username || !password.password) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
-  });
+    const result = await req.collection.insertOne(password);
+    res.status(201).json({ ...password, _id: result.insertedId });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save password' });
+  }
+});
 
-  app.post('/api/passwords', async (req, res) => {
-    try {
-      const password = req.body;
-      if (!password.site || !password.username || !password.password) {
-        return res.status(400).json({ error: 'Missing required fields' });
-      }
-      const result = await collection.insertOne(password);
-      res.status(201).json({ ...password, _id: result.insertedId });
-    } catch (err) {
-      console.error('Error saving password:', err);
-      res.status(500).json({ error: 'Failed to save password' });
+app.delete('/api/passwords/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await req.collection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Password not found' });
     }
-  });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete password' });
+  }
+});
 
-  app.delete('/api/passwords/:id', async (req, res) => {
-    try {
-      const { id } = req.params;
-      const result = await collection.deleteOne({ _id: new ObjectId(id) });
-      if (result.deletedCount === 0) {
-        return res.status(404).json({ error: 'Password not found' });
-      }
-      res.json({ success: true });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Failed to delete password' });
+app.put('/api/passwords/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const password = req.body;
+    const result = await req.collection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: password }
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Password not found' });
     }
-  });
+    const updatedDoc = await req.collection.findOne({ _id: new ObjectId(id) });
+    res.json(updatedDoc);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update password' });
+  }
+});
 
-  app.put('/api/passwords/:id', async (req, res) => {
-    try {
-      const { id } = req.params;
-      const password = req.body;
-      const result = await collection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: password }
-      );
-      if (result.matchedCount === 0) {
-        return res.status(404).json({ error: 'Password not found' });
-      }
-      const updatedDoc = await collection.findOne({ _id: new ObjectId(id) });
-      res.json(updatedDoc);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Failed to update password' });
-    }
-  });
-}
-
-// Initialize database connection
-connectDB();
-
-// Export serverless handler as the default export
+// Export for Vercel
 module.exports = serverless(app);

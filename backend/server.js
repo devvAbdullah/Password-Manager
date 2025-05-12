@@ -1,49 +1,101 @@
-
 const express = require('express')
-const dotenv =require('dotenv')
-const { MongoClient } = require('mongodb');
-var cors = require('cors')
+const dotenv = require('dotenv')
+const { MongoClient } = require('mongodb')
+const cors = require('cors')
 const bodyParser = require('body-parser')
 dotenv.config()
 
-// Connection URL
-const url = 'mongodb://localhost:27017';
-const client = new MongoClient(url);
-
-
-// Database Name
-const dbName = 'passop';
 const app = express()
-const port = 3000
-app.use(cors())
-app.use(bodyParser.json()) 
+const port = process.env.PORT || 3000
 
- client.connect();
- //get all passwords
- app.get('/', async(req, res) => {
-   const db = client.db(dbName);
-   const collection = db.collection('passwords');
-  const findResult = await collection.find({}).toArray();
-  res.json(findResult)
-})
-//save a password
- app.post('/', async(req, res) => {
-  const password = req.body
-   const db = client.db(dbName);
-   const collection = db.collection('passwords');
-  const findResult = await collection.insertOne(password);
-  res.send({ success: true, result: findResult })
+// Middleware
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'https://your-netlify-app.netlify.app'
+}))
+app.use(bodyParser.json())
+
+// Database Connection
+const url = process.env.MONGO_URI
+const client = new MongoClient(url)
+const dbName = 'passop'
+
+let db, collection
+
+async function connectDB() {
+  try {
+    await client.connect()
+    db = client.db(dbName)
+    collection = db.collection('passwords')
+    console.log('Connected to MongoDB')
+  } catch (err) {
+    console.error('Database connection error:', err)
+    process.exit(1)
+  }
+}
+
+connectDB()
+
+// Routes
+// Get all passwords
+app.get('/api/passwords', async (req, res) => {
+  try {
+    const passwords = await collection.find({}).toArray()
+    res.json(passwords)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Failed to fetch passwords' })
+  }
 })
 
-//delete a password by id
-app.delete('/', async(req, res) => {
-  const password = req.body
-   const db = client.db(dbName);
-   const collection = db.collection('passwords');
-  const findResult = await collection.deleteOne(password);
-  res.send({ success: true, result: findResult })
+// Save a password
+app.post('/api/passwords', async (req, res) => {
+  try {
+    const password = req.body
+    if (!password.site || !password.username || !password.password) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+    const result = await collection.insertOne(password)
+    res.status(201).json({ success: true, id: result.insertedId })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Failed to save password' })
+  }
+})
+
+// Delete a password by id
+app.delete('/api/passwords/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const result = await collection.deleteOne({ id: id })
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Password not found' })
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Failed to delete password' })
+  }
+})
+
+// Update a password
+app.put('/api/passwords/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const password = req.body
+    const result = await collection.updateOne(
+      { id: id },
+      { $set: password }
+    )
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Password not found' })
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Failed to update password' })
+  }
 })
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-}) 
+  console.log(`Server running on port ${port}`)
+})
